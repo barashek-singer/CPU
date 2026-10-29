@@ -1,0 +1,22 @@
+IN
+IN
+POP BX
+POP AX
+PUSH BX
+PUSH AX
+JE equal
+PUSH BX
+PUSH AX
+JB below
+:above
+PUSH 1
+OUT
+HLT
+:below
+PUSH -1
+OUT
+HLT
+:equal
+PUSH 0
+OUT
+HLT

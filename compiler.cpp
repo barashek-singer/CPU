@@ -15,6 +15,7 @@
 // [MAW] Регистры
 // [mew] Метки, прыжки
 // [   ] Функции
+// [   ] RAM
 // [   ] SQRT =(
 // [   ]
 
@@ -27,8 +28,9 @@
 //OUT
 //...
 
-const char* ASM_FILE = "asm.txt";
-const char* BIN_FILE = "lst.bin";
+const char*  ASM_FILE = "asm.txt";
+const char*  BIN_FILE = "lst.bin";
+const size_t MAX_LABEL_LEN = 20;
 
 struct text_line {
     char* start;
@@ -42,6 +44,12 @@ struct asm_text {
     text_line* lines;
 };
 
+struct label_t {
+    char* name;
+    size_t len;
+    size_t ip;
+};
+
 cpu_err_t LoadAsmTextFromFile(asm_text* text, const char* name_file);
 
 cpu_err_t SplitText(asm_text* text);
@@ -49,6 +57,8 @@ cpu_err_t SplitText(asm_text* text);
 void FreeAsmText(asm_text* text);
 
 cpu_err_t TranslateAsmToBin(asm_text* text, byte_t* code, size_t* code_size);
+
+size_t CountLabelsInAsm(asm_text* text);
 
 cpu_err_t PrintBinCodeToFile(byte_t* code, size_t code_size, const char* lst_file);
 
@@ -70,6 +80,8 @@ int main() {
 
     err = TranslateAsmToBin(&text, byte_code, &code_size);
     if (err != CPU_OK) {
+        FreeAsmText(&text);
+        free(byte_code);
         CpuShowError(err);
         return 1;
     }
@@ -78,6 +90,7 @@ int main() {
 
     err = PrintBinCodeToFile(byte_code, code_size, BIN_FILE);
     if (err != CPU_OK) {
+        free(byte_code);
         CpuShowError(err);
         return 1;
     }
@@ -167,11 +180,93 @@ cpu_err_t TranslateAsmToBin(asm_text* text, byte_t* code, size_t* code_size) {
 
     *code_size = 0;
     int temp_n = 0;
+    char temp_ch = '\0';
     int arg = 0;
-    char temp_s[8] = "";
+    char temp_s[MAX_CMD_LEN] = "";
     cmd_t cmd = UNKNOWN_CMD;
+    size_t ip = 0;
 
+    size_t labels_count = CountLabelsInAsm(text);
+    label_t* labels = (label_t*)calloc(labels_count, sizeof(label_t));
+    if (labels == NULL)
+        return CPU_OOM;
+
+    size_t cur_label = 0;
+    //первый проход
     for (size_t i = 0; i < text->lines_count; i++) {
+        sscanf(text->lines[i].start, " %c%n", &temp_ch, &temp_n);
+
+        if (temp_ch == ':') { //done
+            if (!isgraph(text->lines[i].start[temp_n]))
+                return CPU_EMPTY_LABEL; //TODO добавить ошибку
+
+            labels[cur_label].name = text->lines[i].start + temp_n;
+            labels[cur_label].ip = ip;
+            while (isgraph(text->lines[i].start[temp_n++]))
+                ++labels[cur_label].len;
+
+            printf(":%s - ip = %zu, len = %zu\n", labels[cur_label].name, labels[cur_label].ip, labels[cur_label].len);
+
+            sscanf(text->lines[i].start, " %*s %n", &temp_n);
+            if (text->lines[i].start + temp_n != text->lines[i].end)
+                return CPU_TOO_MUCH_ARGS;
+
+            ++cur_label;
+            continue;
+        }
+
+        cmd = UNKNOWN_CMD;
+        sscanf(text->lines[i].start, "%7s", temp_s);
+
+        for (int cmd_ind = 0; cmd_ind < (int)MAX_NUM_CMD; cmd_ind++)
+            if (!strncmp(commands[cmd_ind], temp_s, MAX_CMD_LEN)) 
+                cmd = (cmd_t)cmd_ind;
+
+        if (cmd == UNKNOWN_CMD) 
+            return CPU_UNKNOWN_CMD;
+
+        switch ((int)cmd) {
+            case PUSH:
+            case POP:
+            case JMP:
+            case JA:
+            case JAE:
+            case JB:
+            case JBE:
+            case JE:
+            case JNE:
+                ip += sizeof(byte_t) + sizeof(int);
+                break;
+
+            case ADD:
+            case SUB:
+            case MUL:
+            case DIV:
+            case IN:
+            case OUT:
+            case HLT:
+                ++ip;
+                break;
+
+            default:
+                break;
+        }
+        
+    }
+
+    printf("labels_count = %zu\n", labels_count);
+    
+    for (cur_label = 0; cur_label < labels_count; cur_label++)
+        
+
+    //второй проход
+    for (size_t i = 0; i < text->lines_count; i++) {
+    //второй проход
+        sscanf(text->lines[i].start, " %c%n", &temp_ch, &temp_n);
+
+        if (temp_ch == ':') 
+            continue;
+
         cmd = UNKNOWN_CMD;
         sscanf(text->lines[i].start, "%7s", temp_s);
 
@@ -187,7 +282,7 @@ cpu_err_t TranslateAsmToBin(asm_text* text, byte_t* code, size_t* code_size) {
             {
                 sscanf(text->lines[i].start, "%*s %n", &temp_n);
 
-                if (isdigit(text->lines[i].start[temp_n])) { //done
+                if (isdigit(text->lines[i].start[temp_n]) || text->lines[i].start[temp_n] == '+' || text->lines[i].start[temp_n] == '-') { //done
                     sscanf(text->lines[i].start, "%*s %d %n", &arg, &temp_n);
                     if (text->lines[i].start + temp_n != text->lines[i].end) 
                         return CPU_BAD_ARG;
@@ -242,6 +337,27 @@ cpu_err_t TranslateAsmToBin(asm_text* text, byte_t* code, size_t* code_size) {
 
                 break;
             }
+            case JMP:
+            case JA:
+            case JAE:
+            case JB:
+            case JBE:
+            case JE:
+            case JNE:
+            {
+                sscanf(text->lines[i].start, " %*s %n", &temp_n);
+                for (cur_label = 0; cur_label < labels_count; cur_label++) {
+                    // printf("text->lines[i].start + temp_n = <%s>\n", text->lines[i].start + temp_n);
+                    // printf("labels[cur_label].name = <%s>\n", labels[cur_label].name);
+                    // printf("labels[cur_label].len = %zu\n", labels[cur_label].len);
+                    // printf("(text->lines[i].start + temp_n)[labels[cur_label].len] = <%d>\n", (text->lines[i].start + temp_n)[labels[cur_label].len]);
+                    if (!strncmp(labels[cur_label].name, text->lines[i].start + temp_n, labels[cur_label].len) && !isgraph((text->lines[i].start + temp_n)[labels[cur_label].len])) {
+                        // printf("ARG = %d", (-(int)*code_size) + (int)labels[cur_label].ip);
+                        arg = (-(int)*code_size) + (int)labels[cur_label].ip;
+                    }
+                }
+                break;
+            }
 
             default:
                 break;
@@ -250,16 +366,33 @@ cpu_err_t TranslateAsmToBin(asm_text* text, byte_t* code, size_t* code_size) {
         printf("%d", (int)cmd);
         code[(*code_size)++] = cmd;
 
-        if ((cmd & OPCODE_BITS) == PUSH || (cmd & OPCODE_BITS) == POP) {
+        if ((cmd & OPCODE_BITS) == PUSH || (cmd & OPCODE_BITS) == POP || ((int)JMP <= (int)cmd && (int)cmd <= (int)JNE)) {
             printf(" %d", arg);
             memcpy(code + *code_size, &arg, sizeof(arg));
-            *code_size += 4;
+            *code_size += sizeof(int);
         }
 
         putchar('\n');
     }
 
+    free(labels);
+
     return CPU_OK;
+}
+
+size_t CountLabelsInAsm(asm_text* text) { //done
+    assert(text);
+
+    char temp_ch = '\0';
+    size_t labels_count = 0;
+
+    for (size_t i = 0; i < text->lines_count; i++) {
+        sscanf(text->lines[i].start, " %c", &temp_ch);
+        if (temp_ch == ':') 
+            ++labels_count;
+    }
+
+    return labels_count;
 }
 
 cpu_err_t PrintBinCodeToFile(byte_t* code, size_t code_size, const char* lst_file) {

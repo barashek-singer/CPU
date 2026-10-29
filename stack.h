@@ -199,10 +199,13 @@ void StackDump(const stack_t* stack) {
 
     ON_DEBUG(printf("Init %s: file = %s, func = %s, line %d\n", stack->name, stack->file, stack->func, stack->line));
 
-    printf("stack_t stack[%p]{\n", stack);
+    printf("stack_t stack[%p]", stack);
+
+    ChooseModification(YELLOW_TEXT);
+
+    printf(" {\n");
     
     {
-        ChooseModification(YELLOW_TEXT);
 
         printf("\t.size = %zu,\n", stack->size);
         printf("\t.capacity = %zu,\n", stack->capacity);
@@ -210,22 +213,22 @@ void StackDump(const stack_t* stack) {
         printf("\tleft_canary = %" PRIu64 " (correct canary = %" PRIu64 ")\n", 
                         *((uint64_t*)((size_t)stack->data - sizeof(size_t))), ((uint64_t)(stack) ^ BASE_CANARY));
 
+        ChooseModification(CYAN_TEXT);
+
         printf("\t.data[%p] = {\n", stack->data);
         for (size_t i = 0; i < stack->capacity; i++) {
-            ChooseModification(CYAN_TEXT);
             if (i < stack->size)
                 printf("\t\t*[%zu] = %" stack_elem_specifier ",\n",  i, stack->data[i]);
 
             else
                 printf("\t\t [%zu] = %" stack_elem_specifier ",\n",  i, stack->data[i]);
         }
-
-        printf("\tright_canary = %" PRIu64 " (correct canary = %" PRIu64 ")\n", 
-                        *((uint64_t*)((size_t)stack->data + sizeof(stack_elem_t) * stack->capacity)), ((uint64_t)(stack) ^ BASE_CANARY));
+        printf("\t}\n");
  
         ChooseModification(YELLOW_TEXT);
 
-        printf("\t}\n");
+        printf("\tright_canary = %" PRIu64 " (correct canary = %" PRIu64 ")\n", 
+                        *((uint64_t*)((size_t)stack->data + sizeof(stack_elem_t) * stack->capacity)), ((uint64_t)(stack) ^ BASE_CANARY));
     }
 
     printf("};\n\n");
