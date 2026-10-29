@@ -14,6 +14,7 @@
 // [MAW] Регистры
 // [mew] Метки, прыжки
 // [   ] Функции
+// [   ] RAM
 // [   ] SQRT =(
 // [   ]
 
@@ -28,11 +29,15 @@ cpu_err_t InitCodeArray(code_t* code, const char* bin_file);
 
 cpu_err_t ExecuteCode(code_t* code);
 
+cpu_err_t CorrectExpression(byte_t cmd, stack_t* stack, bool* return_value);
+
 cpu_err_t BinaryOperation(const int operation, stack_t* stack);
 
 void FreeCode(code_t* code);
 
-void CpuDump(int* registers);
+void CpuDump(int* registers, size_t ip, stack_t* stack, code_t* code);
+
+void SkipToEndSym();
 
 int main() {
     code_t code = {0};
@@ -88,6 +93,7 @@ cpu_err_t ExecuteCode(code_t* code) {
     assert(code);
 
     size_t ip = 0;
+    bool is_correct_expression = false;
     int arg = 0;
     int registers[4] = {};
     stack_err_t stack_err = STACK_OK;
@@ -98,15 +104,14 @@ cpu_err_t ExecuteCode(code_t* code) {
 
     while (exe_continue) {
 
-        StackDump(&stack);
-        CpuDump(registers);
+        CpuDump(registers, ip, &stack, code);
 
         if (ip >= code->size)
             return CPU_UNEXPECTED_IP; //nu tipo hlt netu
 
-        if ((code->data[ip] & OPCODE_BITS) == PUSH || (code->data[ip] & OPCODE_BITS) == POP) {
-            printf(" %d", *(int*)(code->data + ip + 1));
-        }
+        // if ((code->data[ip] & OPCODE_BITS) == PUSH || (code->data[ip] & OPCODE_BITS) == POP) {
+        //     printf(" %d", *(int*)(code->data + ip + 1));
+        // }
 
         putchar('\n');
 
@@ -158,6 +163,7 @@ cpu_err_t ExecuteCode(code_t* code) {
             }
             case IN:
             {
+                printf("input value: ");
                 int return_value = scanf("%d", &arg);
 
                 if (return_value != 1)
@@ -180,7 +186,7 @@ cpu_err_t ExecuteCode(code_t* code) {
                     return CPU_STACK;
                 }
 
-                printf("%d", arg);
+                printf("output value: %d\n", arg);
 
                 ++ip;
                 break;
@@ -190,24 +196,119 @@ cpu_err_t ExecuteCode(code_t* code) {
                 exe_continue = false;
                 break;
             }
+            case JMP:
+            case JA:
+            case JAE:
+            case JB:
+            case JBE:
+            case JE:
+            case JNE:
+            {
+                assert(ip + 4 < code->size);
+                cpu_err = CorrectExpression(code->data[ip], &stack, &is_correct_expression);
+                if (cpu_err != CPU_OK)
+                    return cpu_err;
+
+                if (is_correct_expression) 
+                    ip += *(int*)((size_t)code->data + ip + 1);
+                else
+                    ip += sizeof(byte_t) + sizeof(int);
+
+                break;
+            }
             default:
                 return CPU_UNKNOWN_ERROR;
         }
+
+        #ifdef CPU_STEP
+            SkipToEndSym();
+            getchar();
+        #endif
     }
 
     StackFree(&stack);
 
     return CPU_OK;
 }
-//PUSH x
-//ADD
-//SUB
-//MUL
-//DIV
-//IN
-//OUT
-//HLT
-//...
+
+void SkipToEndSym() {
+    scanf("%*[^\n]");
+}
+
+cpu_err_t CorrectExpression(byte_t cmd, stack_t* stack, bool* return_value) {
+    assert(stack);
+    assert(return_value);
+
+    if (cmd == JMP) {
+        *return_value = true;
+        return CPU_OK;
+    }
+
+    *return_value = false;
+    stack_err_t stack_err = STACK_OK;
+    int a = 0, b = 0;
+
+    stack_err = StackPop(stack, &a);
+    if (stack_err != STACK_OK) {
+        StackShowError(stack_err);
+        return CPU_STACK;
+    }
+
+    stack_err = StackPop(stack, &b);
+    if (stack_err != STACK_OK) {
+        StackShowError(stack_err);
+        return CPU_STACK;
+    }
+
+    switch (cmd) {
+        case JA:
+        {
+            if (a > b)
+                *return_value = true;
+
+            break;
+        }
+        case JAE:
+        {
+            if (a >= b)
+                *return_value = true;
+            
+            break;
+        }
+        case JB:
+        {
+            if (a < b)
+                *return_value = true;
+            
+            break;
+        }
+        case JBE:
+        {
+            if (a <= b)
+                *return_value = true;
+            
+            break;
+        }
+        case JE:
+        {
+            if (a == b)
+                *return_value = true;
+            
+            break;
+        }
+        case JNE:
+        {
+            if (a != b)
+                *return_value = true;
+            
+            break;
+        }
+        default:
+            break;
+    }
+
+    return CPU_OK;
+}
 
 cpu_err_t BinaryOperation(const int operation, stack_t* stack) {
     assert(stack);
@@ -264,7 +365,42 @@ void FreeCode(code_t* code) {
     code->size = 0;
 }
 
-void CpuDump(int* registers) {
+void CpuDump(int* registers, size_t ip, stack_t* stack, code_t* code) {
+    assert(registers);
+
+    printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+
+    printf("ip = %zu\n", ip);
+    printf("cmd: %02x", code->data[ip]);
+    if ((code->data[ip] & OPCODE_BITS) == PUSH || (code->data[ip] & OPCODE_BITS) == POP || ((int)JMP <= (int)code->data[ip] && (int)code->data[ip] <= (int)JNE))
+        printf(" %08x", *(int*)((size_t)code->data + ip + 1));
+
+    printf(" - %s", commands[(code->data[ip] & OPCODE_BITS)]);
+    if ((code->data[ip] & OPCODE_BITS) == PUSH || (code->data[ip] & OPCODE_BITS) == POP || ((int)JMP <= (int)code->data[ip] && (int)code->data[ip] <= (int)JNE)) {
+        if (code->data[ip] & REGISTER_BIT) {
+            printf(" %cX", 'A' + *(int*)((size_t)code->data + ip + 1));
+        } else {
+            printf(" %d", *(int*)((size_t)code->data + ip + 1));
+        }
+    }
+
+    putchar('\n');
+
     printf("Registers: AX          BX          CX          DX\n");
-    printf("           %-11d %-11d %-11d %-11d\n", registers[0], registers[1], registers[2], registers[3]);
+    printf("           %-11d %-11d %-11d %-11d\n\n", registers[0], registers[1], registers[2], registers[3]);
+
+    if (stack->size == 0){
+        printf("stack is empty\n");
+    } else if (stack->size <= 5) {
+        for (size_t i = stack->size - 1; i < stack->size; i--)
+            printf("|%-3d|\n", stack->data[i]);
+
+        printf("|___|\n");
+    } else {
+        for (size_t i = stack->size - 1; i >= stack->size - 5; i--)
+            printf("|%-3d|\n", stack->data[i]);
+
+        printf("-----\n");
+    }
+    putchar('\n');
 }
